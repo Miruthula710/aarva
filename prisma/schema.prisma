@@ -1,0 +1,522 @@
+// Rural Mental Health & Care Access Platform - Prisma Schema
+// Normalized PostgreSQL Database Schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  VICTIM
+  COUNSELOR
+  ADMIN
+}
+
+enum RiskLevel {
+  LOW
+  MILD
+  ELEVATED
+  HIGH
+}
+
+enum AlertStatus {
+  PENDING
+  ACKNOWLEDGED
+  REVIEWING
+  RESOLVED
+  ESCALATED
+}
+
+enum FollowUpStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  RESCHEDULED
+  MISSED
+}
+
+enum ReferralStatus {
+  CREATED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum SmsDeliveryStatus {
+  QUEUED
+  SENT
+  DELIVERED
+  FAILED
+}
+
+enum Language {
+  ENGLISH
+  TAMIL
+  HINDI
+  TELUGU
+  MALAYALAM
+  KANNADA
+}
+
+model User {
+  id               String       @id @default(uuid())
+  email            String?      @unique
+  phoneNumber      String?      @unique
+  passwordHash     String
+  role             Role         @default(VICTIM)
+  name             String
+  preferredLanguage Language    @default(ENGLISH)
+  isActive         Boolean      @default(true)
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  victimProfile    Victim?
+  counselorProfile Counselor?
+  sessions         Session[]
+  auditLogs        AuditLog[]
+  notifications    Notification[]
+
+  @@index([role])
+  @@index([phoneNumber])
+  @@index([email])
+}
+
+model Session {
+  id           String   @id @default(uuid())
+  userId       String
+  token        String   @unique
+  userAgent    String?
+  ipAddress    String?
+  expiresAt    DateTime
+  createdAt    DateTime @default(now())
+
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([token])
+}
+
+model Victim {
+  id                  String               @id @default(uuid())
+  userId              String               @unique
+  victimCode          String               @unique // e.g. V-1001
+  age                 Int?
+  gender              String?
+  village             String?
+  district            String?
+  state               String?
+  emergencyContactName String?
+  emergencyContactPhone String?
+  assignedCounselorId String?
+  currentDistressScore Float               @default(0)
+  currentRiskLevel    RiskLevel            @default(LOW)
+  lastCheckInAt       DateTime?
+  lastInteractionAt   DateTime?
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+
+  user                User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  assignedCounselor   Counselor?           @relation(fields: [assignedCounselorId], references: [id], onDelete: SetNull)
+  
+  checkIns            DailyCheckIn[]
+  questionHistories   QuestionHistory[]
+  conversations       Conversation[]
+  voiceSessions       VoiceSession[]
+  distressAssessments DistressAssessment[]
+  riskEvents          RiskEvent[]
+  alerts              Alert[]
+  assignments         CounselorAssignment[]
+  followUps           FollowUp[]
+  referrals           Referral[]
+  appointments        Appointment[]
+  smsLogs             SmsLog[]
+
+  @@index([assignedCounselorId])
+  @@index([currentRiskLevel])
+  @@index([victimCode])
+}
+
+model Counselor {
+  id               String               @id @default(uuid())
+  userId           String               @unique
+  badgeNumber      String               @unique
+  specialization   String               @default("Clinical Counselor")
+  facilityId       String?
+  assignedDistrict String?
+  isAvailable      Boolean              @default(true)
+  createdAt        DateTime             @default(now())
+  updatedAt        DateTime             @updatedAt
+
+  user             User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  facility         Facility?            @relation(fields: [facilityId], references: [id], onDelete: SetNull)
+  
+  assignedVictims  Victim[]
+  assignments      CounselorAssignment[]
+  handledAlerts    Alert[]
+  followUps        FollowUp[]
+  referrals        Referral[]
+  clinicalNotes    ClinicalNote[]
+
+  @@index([facilityId])
+}
+
+model Facility {
+  id          String      @id @default(uuid())
+  name        String
+  type        String      // e.g. "Primary Health Centre (PHC)", "District Hospital", "Community Health Centre"
+  district    String
+  state       String
+  contactPhone String?
+  address     String?
+  hasPsychiatrist Boolean @default(false)
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  counselors  Counselor[]
+  referrals   Referral[]
+
+  @@index([district])
+}
+
+model Question {
+  id            String            @id @default(uuid())
+  code          String            @unique // e.g. Q_MOOD, Q_SLEEP
+  category      String            // mood, sleep, stress, social, functioning
+  promptEnglish String
+  promptTamil   String
+  promptHindi   String
+  promptTelugu  String
+  promptMalayalam String
+  promptKannada String
+  weight        Float             @default(1.0)
+  createdAt     DateTime          @default(now())
+
+  responses     Response[]
+  history       QuestionHistory[]
+}
+
+model DailyCheckIn {
+  id              String             @id @default(uuid())
+  victimId        String
+  checkInDate     DateTime           @default(now())
+  isCompleted     Boolean            @default(false)
+  completionSource String            @default("WEB_APP") // WEB_APP, PWA_OFFLINE_SYNC, TELEPHONY
+  distressScore   Float              @default(0)
+  riskLevel       RiskLevel          @default(LOW)
+  notes           String?
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+
+  victim          Victim             @relation(fields: [victimId], references: [id], onDelete: Cascade)
+  responses       Response[]
+  assessment      DistressAssessment?
+
+  @@index([victimId, checkInDate])
+}
+
+model Response {
+  id            String       @id @default(uuid())
+  checkInId     String
+  questionId    String
+  rawAnswer     String
+  numericValue  Float?       // 0-10 normalized scale
+  sentiment     String?
+  createdAt     DateTime     @default(now())
+
+  checkIn       DailyCheckIn @relation(fields: [checkInId], references: [id], onDelete: Cascade)
+  question      Question     @relation(fields: [questionId], references: [id], onDelete: Restrict)
+
+  @@index([checkInId])
+  @@index([questionId])
+}
+
+model QuestionHistory {
+  id         String   @id @default(uuid())
+  victimId   String
+  questionId String
+  askedAt    DateTime @default(now())
+
+  victim     Victim   @relation(fields: [victimId], references: [id], onDelete: Cascade)
+  question   Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@index([victimId])
+}
+
+model Conversation {
+  id          String                @id @default(uuid())
+  victimId    String
+  title       String?               @default("Support Conversation")
+  language    Language              @default(ENGLISH)
+  isArchived  Boolean               @default(false)
+  summary     String?               // High level summary for counselor privacy
+  createdAt   DateTime              @default(now())
+  updatedAt   DateTime              @updatedAt
+
+  victim      Victim                @relation(fields: [victimId], references: [id], onDelete: Cascade)
+  messages    ConversationMessage[]
+
+  @@index([victimId])
+}
+
+model ConversationMessage {
+  id             String       @id @default(uuid())
+  conversationId String
+  sender         String       // USER or AI or COUNSELOR
+  content        String
+  language       Language     @default(ENGLISH)
+  distressScore  Float?
+  safetyFlag     Boolean      @default(false)
+  createdAt      DateTime     @default(now())
+
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId])
+}
+
+model VoiceSession {
+  id            String         @id @default(uuid())
+  victimId      String
+  durationSec   Int            @default(0)
+  language      Language       @default(ENGLISH)
+  audioUri      String?
+  transcript    String?
+  summary       String?
+  createdAt     DateTime       @default(now())
+
+  victim        Victim         @relation(fields: [victimId], references: [id], onDelete: Cascade)
+  features      VoiceFeature?
+
+  @@index([victimId])
+}
+
+model VoiceFeature {
+  id             String       @id @default(uuid())
+  voiceSessionId String       @unique
+  speechRate     Float?       // words per min
+  pauseFrequency Float?       // pauses per min
+  pitchVariation Float?       // semitones/Hz std dev
+  energyLevel    Float?       // normalized rms
+  voiceStability Float?       // 0-100 score
+  acousticSignal RiskLevel    @default(LOW)
+  createdAt      DateTime     @default(now())
+
+  voiceSession   VoiceSession @relation(fields: [voiceSessionId], references: [id], onDelete: Cascade)
+}
+
+model DistressAssessment {
+  id                 String        @id @default(uuid())
+  victimId           String
+  checkInId          String?       @unique
+  score              Float         // 0 - 100
+  previousScore      Float?
+  trend              String        // INCREASING, STABLE, DECREASING
+  riskLevel          RiskLevel
+  confidence         String        @default("Moderate") // Low, Moderate, High
+  reason             String
+  contributingFactors String[]     // e.g. ["Reduced sleep", "Elevated stress", "Social isolation"]
+  createdAt          DateTime      @default(now())
+
+  victim             Victim        @relation(fields: [victimId], references: [id], onDelete: Cascade)
+  checkIn            DailyCheckIn? @relation(fields: [checkInId], references: [id], onDelete: SetNull)
+  alerts             Alert[]
+
+  @@index([victimId])
+  @@index([riskLevel])
+}
+
+model RiskEvent {
+  id          String    @id @default(uuid())
+  victimId    String
+  severity    RiskLevel
+  eventType   String    // e.g. "SAFETY_CONCERN_DETECTED", "DISTRESS_SCORE_SPIKE", "MISSED_CHECKINS"
+  description String
+  isResolved  Boolean   @default(false)
+  createdAt   DateTime  @default(now())
+
+  victim      Victim    @relation(fields: [victimId], references: [id], onDelete: Cascade)
+  alert       Alert?
+
+  @@index([victimId])
+}
+
+model Alert {
+  id              String              @id @default(uuid())
+  victimId        String
+  riskEventId     String?             @unique
+  assessmentId    String?
+  counselorId     String?
+  priority        RiskLevel           @default(HIGH)
+  status          AlertStatus         @default(PENDING)
+  title           String
+  currentScore    Float
+  previousScore   Float?
+  trend           String              @default("Increasing")
+  signals         String[]
+  recommendedAction String            @default("Immediate counselor review required")
+  acknowledgedAt  DateTime?
+  resolvedAt      DateTime?
+  resolutionNotes String?
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+
+  victim          Victim              @relation(fields: [victimId], references: [id], onDelete: Cascade)
+  riskEvent       RiskEvent?          @relation(fields: [riskEventId], references: [id], onDelete: SetNull)
+  assessment      DistressAssessment? @relation(fields: [assessmentId], references: [id], onDelete: SetNull)
+  counselor       Counselor?          @relation(fields: [counselorId], references: [id], onDelete: SetNull)
+
+  @@index([status])
+  @@index([priority])
+  @@index([victimId])
+}
+
+model CounselorAssignment {
+  id          String    @id @default(uuid())
+  victimId    String
+  counselorId String
+  assignedAt  DateTime  @default(now())
+  isActive    Boolean   @default(true)
+  notes       String?
+
+  victim      Victim    @relation(fields: [victimId], references: [id], onDelete: Cascade)
+  counselor   Counselor @relation(fields: [counselorId], references: [id], onDelete: Cascade)
+
+  @@index([victimId])
+  @@index([counselorId])
+}
+
+model FollowUp {
+  id          String         @id @default(uuid())
+  victimId    String
+  counselorId String
+  dueDate     DateTime
+  status      FollowUpStatus @default(PENDING)
+  priority    RiskLevel      @default(MILD)
+  notes       String?
+  outcomeNotes String?
+  completedAt DateTime?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  victim      Victim         @relation(fields: [victimId], references: [id], onDelete: Cascade)
+  counselor   Counselor      @relation(fields: [counselorId], references: [id], onDelete: Cascade)
+
+  @@index([victimId])
+  @@index([counselorId])
+  @@index([status])
+}
+
+model Referral {
+  id             String         @id @default(uuid())
+  victimId       String
+  counselorId    String
+  facilityId     String
+  reason         String
+  status         ReferralStatus @default(CREATED)
+  notes          String?
+  appointmentDate DateTime?
+  completedAt    DateTime?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  victim         Victim         @relation(fields: [victimId], references: [id], onDelete: Cascade)
+  counselor      Counselor      @relation(fields: [counselorId], references: [id], onDelete: Cascade)
+  facility       Facility       @relation(fields: [facilityId], references: [id], onDelete: Cascade)
+
+  @@index([victimId])
+  @@index([counselorId])
+  @@index([facilityId])
+  @@index([status])
+}
+
+model Appointment {
+  id            String    @id @default(uuid())
+  victimId      String
+  scheduledDate DateTime
+  type          String    // e.g. "Tele-counseling", "PHC In-person", "Follow-up"
+  notes         String?
+  isCompleted   Boolean   @default(false)
+  createdAt     DateTime  @default(now())
+
+  victim        Victim    @relation(fields: [victimId], references: [id], onDelete: Cascade)
+
+  @@index([victimId])
+}
+
+model ClinicalNote {
+  id          String    @id @default(uuid())
+  counselorId String
+  victimId    String
+  content     String
+  isPrivate   Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  counselor   Counselor @relation(fields: [counselorId], references: [id], onDelete: Cascade)
+
+  @@index([victimId])
+}
+
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String
+  title     String
+  message   String
+  type      String   // ALERT, REMINDER, SYSTEM
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model SmsLog {
+  id             String            @id @default(uuid())
+  victimId       String?
+  recipientPhone String
+  message        String
+  purpose        String            // CHECKIN_REMINDER, EMERGENCY_ALERT, FOLLOWUP_NOTICE
+  status         SmsDeliveryStatus @default(SENT)
+  providerMessageId String?
+  sentAt         DateTime          @default(now())
+
+  victim         Victim?           @relation(fields: [victimId], references: [id], onDelete: SetNull)
+
+  @@index([recipientPhone])
+  @@index([sentAt])
+}
+
+model AuditLog {
+  id           String   @id @default(uuid())
+  userId       String?
+  action       String   // LOGIN, LOGOUT, VICTIM_REGISTRATION, ALERT_ACKNOWLEDGE, ASSESSMENT_CREATE, etc.
+  resourceType String   // User, Victim, Alert, Assessment, FollowUp, Report
+  resourceId   String?
+  details      String?  // JSON string
+  ipAddress    String?
+  createdAt    DateTime @default(now())
+
+  user         User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([action])
+  @@index([createdAt])
+}
+
+model AdminConfig {
+  id                     String   @id @default("default")
+  distressThresholdLow   Float    @default(24.0)
+  distressThresholdMild  Float    @default(49.0)
+  distressThresholdElev  Float    @default(74.0)
+  distressThresholdHigh  Float    @default(100.0)
+  dailyReminderHourUtc   Int      @default(4) // 9:30 AM IST
+  twilioEnabled          Boolean  @default(false)
+  smsGatewayEnabled      Boolean  @default(true)
+  autoEscalateHighRisk   Boolean  @default(true)
+  emergencyHotlines      String   // JSON string of emergency contacts
+  updatedAt              DateTime @updatedAt
+}

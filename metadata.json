@@ -1,0 +1,11 @@
+{
+  "name": "Aarva Health Care",
+  "description": "Multilingual rural mental health support, conversational wellbeing check-ins, distress scoring, counselor coordination, and offline-first care access platform.",
+  "requestFramePermissions": [
+    "microphone",
+    "geolocation"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
